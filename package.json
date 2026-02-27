@@ -1,0 +1,35 @@
+{
+  "name": "integration-failure-playground",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "demo:server": "node src/server.js",
+    "demo:test": "wait-on http://localhost:3000/health && npx newman run .\\postman\\collection.json -e .\\postman\\environment.json --env-var baseUrl=http://localhost:3000",
+    "demo": "powershell -Command \"$p = Start-Process node -ArgumentList 'src/server.js' -PassThru; try { npm run demo:test } finally { Stop-Process -Id $p.Id -Force }\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "morgan": "^1.10.1",
+    "swagger-ui-express": "^5.0.1",
+    "uuid": "^13.0.0",
+    "yaml": "^2.8.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "newman": "^6.2.2",
+    "nodemon": "^3.1.14",
+    "wait-on": "^9.0.4"
+  }
+}

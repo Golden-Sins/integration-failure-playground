@@ -1,0 +1,460 @@
+openapi: 3.0.3
+info:
+  title: Integration Failure Playground
+  version: 1.0.0
+  description: >
+    A realistic API sandbox to practice integration debugging:
+    token auth + expiry (401), scope authorization (403), schema validation (400),
+    idempotency conflicts (409), rate limiting (429), and flaky upstream errors (500).
+servers:
+  - url: http://localhost:3000
+
+tags:
+  - name: Core
+  - name: Auth
+  - name: Orders
+  - name: Payments
+  - name: Status
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error, requestId]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: UNAUTHORIZED
+            message:
+              type: string
+              example: Invalid or expired token
+            details:
+              nullable: true
+              description: Optional structured details for debugging.
+        requestId:
+          type: string
+          example: 15da4ce4-6670-4efe-816a-5b56fa4ccb7c
+
+    HealthResponse:
+      type: object
+      required: [ok, requestId]
+      properties:
+        ok:
+          type: boolean
+          example: true
+        requestId:
+          type: string
+
+    TokenRequest:
+      type: object
+      required: [client_id, client_secret]
+      properties:
+        client_id:
+          type: string
+          example: demo
+        client_secret:
+          type: string
+          example: demo
+        scope:
+          type: string
+          description: Space-separated scopes.
+          example: orders:write payments:write
+
+    TokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, scope, requestId]
+      properties:
+        access_token:
+          type: string
+          description: JWT access token
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          example: 60
+        scope:
+          type: string
+          example: orders:write payments:write
+        requestId:
+          type: string
+
+    OrderCreateRequest:
+      type: object
+      required: [order_id, customer_id, amount, currency]
+      properties:
+        order_id:
+          type: string
+          example: o1
+        customer_id:
+          type: string
+          example: c1
+        amount:
+          type: number
+          example: 50
+        currency:
+          type: string
+          enum: [EUR, USD, GBP]
+          example: EUR
+
+    OrderCreateResponse:
+      allOf:
+        - $ref: "#/components/schemas/OrderCreateRequest"
+        - type: object
+          required: [id, status, requestId]
+          properties:
+            id:
+              type: string
+              example: ord_ab12cd34
+            status:
+              type: string
+              example: CREATED
+            requestId:
+              type: string
+
+    PaymentCreateRequest:
+      type: object
+      required: [order_id, amount, currency, method]
+      properties:
+        order_id:
+          type: string
+          example: o1
+        amount:
+          type: number
+          example: 50
+        currency:
+          type: string
+          enum: [EUR, USD, GBP]
+          example: EUR
+        method:
+          type: string
+          enum: [card, bank_transfer]
+          example: card
+
+    PaymentCreateResponse:
+      allOf:
+        - $ref: "#/components/schemas/PaymentCreateRequest"
+        - type: object
+          required: [id, status, requestId]
+          properties:
+            id:
+              type: string
+              example: pay_9f8e7d6c
+            status:
+              type: string
+              example: APPROVED
+            requestId:
+              type: string
+
+    StatusResponse:
+      type: object
+      required: [simulated, status, requestId]
+      properties:
+        simulated:
+          type: boolean
+          example: true
+        status:
+          type: integer
+          example: 401
+        requestId:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Bad Request (validation error, missing headers, etc.)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          examples:
+            validationError:
+              summary: Validation error
+              value:
+                error:
+                  code: VALIDATION_ERROR
+                  message: Unexpected error
+                  details:
+                    - path: ["amount"]
+                      message: Expected number, received string
+                requestId: 11111111-2222-3333-4444-555555555555
+            missingIdempotency:
+              summary: Missing Idempotency-Key header
+              value:
+                error:
+                  code: MISSING_IDEMPOTENCY_KEY
+                  message: Idempotency-Key header required
+                requestId: 11111111-2222-3333-4444-555555555555
+
+    Unauthorized:
+      description: Unauthorized (missing/invalid/expired token)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          examples:
+            missingToken:
+              value:
+                error:
+                  code: UNAUTHORIZED
+                  message: Missing Bearer token
+                requestId: 11111111-2222-3333-4444-555555555555
+            expiredToken:
+              value:
+                error:
+                  code: UNAUTHORIZED
+                  message: Invalid or expired token
+                requestId: 11111111-2222-3333-4444-555555555555
+
+    Forbidden:
+      description: Forbidden (token valid but missing required scope)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          examples:
+            missingScope:
+              value:
+                error:
+                  code: FORBIDDEN
+                  message: Missing required scope
+                  details:
+                    requiredScopes: [orders:write]
+                    missingScopes: [orders:write]
+                requestId: 11111111-2222-3333-4444-555555555555
+
+    NotFound:
+      description: Route not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          examples:
+            routeNotFound:
+              value:
+                error:
+                  code: NOT_FOUND
+                  message: Route not found
+                  path: /nope
+                requestId: 11111111-2222-3333-4444-555555555555
+
+    Conflict:
+      description: Conflict (idempotency conflict)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          examples:
+            idempotencyConflict:
+              value:
+                error:
+                  code: IDEMPOTENCY_CONFLICT
+                  message: Duplicate idempotency key
+                requestId: 11111111-2222-3333-4444-555555555555
+
+    RateLimited:
+      description: Too Many Requests (rate limited)
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying
+          schema:
+            type: string
+            example: "10"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          examples:
+            rateLimited:
+              value:
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests
+                requestId: 11111111-2222-3333-4444-555555555555
+
+    UpstreamError:
+      description: Upstream provider error (simulated)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          examples:
+            upstream:
+              value:
+                error:
+                  code: UPSTREAM_ERROR
+                  message: Upstream provider error (simulated)
+                requestId: 11111111-2222-3333-4444-555555555555
+
+paths:
+  /health:
+    get:
+      tags: [Core]
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /auth/token:
+    post:
+      tags: [Auth]
+      summary: Issue an access token
+      description: >
+        Demo credentials are `demo/demo`.
+        Tokens expire quickly to simulate real-world expiry issues.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenRequest"
+            examples:
+              demo:
+                value:
+                  client_id: demo
+                  client_secret: demo
+                  scope: orders:write payments:write
+      responses:
+        "200":
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Invalid client credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                invalidClient:
+                  value:
+                    error:
+                      code: INVALID_CLIENT
+                      message: Invalid client credentials
+                    requestId: 11111111-2222-3333-4444-555555555555
+
+  /orders:
+    post:
+      tags: [Orders]
+      summary: Create an order (idempotent)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+          description: Unique key to prevent duplicate creates.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderCreateRequest"
+            examples:
+              valid:
+                value:
+                  order_id: o1
+                  customer_id: c1
+                  amount: 50
+                  currency: EUR
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderCreateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /payments:
+    post:
+      tags: [Payments]
+      summary: Create a payment (optionally flaky)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: header
+          name: X-Flaky
+          required: false
+          schema:
+            type: string
+            example: "true"
+          description: If true, randomly returns 500 to simulate upstream failures.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentCreateRequest"
+            examples:
+              valid:
+                value:
+                  order_id: o1
+                  amount: 50
+                  currency: EUR
+                  method: card
+      responses:
+        "200":
+          description: Payment approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentCreateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/UpstreamError"
+
+  /status/{code}:
+    get:
+      tags: [Status]
+      summary: Return any status code (rate limited)
+      parameters:
+        - in: path
+          name: code
+          required: true
+          schema:
+            type: integer
+            example: 401
+      responses:
+        "200":
+          description: Simulated response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
